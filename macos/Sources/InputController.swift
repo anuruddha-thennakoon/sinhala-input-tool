@@ -9,6 +9,8 @@ final class SinhalaInputController: IMKInputController {
     private static let panel = CandidatePanel()
     private static let toast = ToastPanel()
     private let noRange = NSRange(location: NSNotFound, length: NSNotFound)
+    private var caret = CaretLocator()
+    private var repositionToken = 0   // invalidates pending re-checks when the popup changes
 
     override func recognizedEvents(_ sender: Any!) -> Int {
         Int(NSEvent.EventTypeMask.keyDown.rawValue)
@@ -118,11 +120,13 @@ final class SinhalaInputController: IMKInputController {
 
     private func commitSelection(_ client: IMKTextInput, suffix: String = "") {
         let text = core.commit() ?? ""
+        repositionToken += 1   // cancel pending popup re-checks
         insert(text + suffix, client)
     }
 
     /// Replaces the marked text with `text` and hides the popup.
     private func insert(_ text: String, _ client: IMKTextInput) {
+        repositionToken += 1
         client.insertText(text, replacementRange: noRange)
         Self.panel.hide()
     }
@@ -139,18 +143,27 @@ final class SinhalaInputController: IMKInputController {
                 .underlineStyle: NSUnderlineStyle.single.rawValue]),
             selectionRange: NSRange(location: buffer.utf16.count, length: 0),
             replacementRange: noRange)
-        Self.panel.show(core.popup(), below: caretRect(client))
+        let popup = core.popup()
+        Self.panel.show(popup, below: caretRect(client))
+        scheduleReposition(client)
+    }
+
+    /// Word lays out the new composition text a moment after `setMarkedText`, so the first
+    /// answer can be stale. Ask again after the run loop turns and once more shortly after;
+    /// move the popup only if the cursor really is somewhere else.
+    private func scheduleReposition(_ client: IMKTextInput) {
+        repositionToken += 1
+        let token = repositionToken
+        for delay in [0.0, 0.06] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, token == self.repositionToken, self.core.isComposing,
+                      let rect = self.caret.locate(client) else { return }
+                Self.panel.show(self.core.popup(), below: rect)
+            }
+        }
     }
 
     private func caretRect(_ client: IMKTextInput) -> NSRect {
-        var rect = NSRect.zero
-        let marked = client.markedRange()
-        let index = marked.location == NSNotFound ? 0 : max(0, marked.location)
-        _ = client.attributes(forCharacterIndex: index, lineHeightRectangle: &rect)
-        if rect == .zero || rect.origin.x.isNaN {
-            let m = NSEvent.mouseLocation          // client gave nothing usable
-            rect = NSRect(x: m.x, y: m.y, width: 1, height: 18)
-        }
-        return rect
+        caret.locate(client) ?? caret.fallback()
     }
 }

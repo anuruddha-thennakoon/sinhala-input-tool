@@ -1,4 +1,5 @@
 // Run via macos/build.sh test. Exits non-zero on the first failure.
+import Cocoa
 import Foundation
 
 var failures = 0
@@ -68,6 +69,23 @@ for composing in [false, true] {
         check(r(code, chars, composing: composing, enabled: false), .passThrough, "disabled key \(code) composing=\(composing)")
     }
 }
+
+// Caret rectangle validation (what the popup is allowed to be placed at).
+func plausible(_ r: NSRect, _ expect: Bool, _ label: String) {
+    if CaretLocator.plausible(r) != expect {
+        print("FAIL caret \(label): expected plausible=\(expect)")
+        failures += 1
+    }
+}
+let screen = NSScreen.screens.first?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+plausible(NSRect(x: screen.midX, y: screen.midY, width: 2, height: 18), true, "on-screen line")
+plausible(.zero, false, "empty rect (Word sometimes returns this)")
+plausible(NSRect(x: screen.midX, y: screen.midY, width: 2, height: 0), false, "zero height")
+plausible(NSRect(x: screen.midX, y: screen.midY, width: 2, height: 5000), false, "absurd height")
+plausible(NSRect(x: CGFloat.nan, y: 10, width: 2, height: 18), false, "NaN origin")
+plausible(NSRect(x: CGFloat.infinity, y: 10, width: 2, height: 18), false, "infinite origin")
+plausible(NSRect(x: screen.maxX + 5000, y: screen.midY, width: 2, height: 18), false, "far off screen")
+plausible(NSRect(x: screen.minX - 20, y: screen.midY, width: 2, height: 18), true, "just off the edge is tolerated")
 
 if failures == 0 { print("KeyRouter: all checks passed") }
 exit(failures == 0 ? 0 : 1)

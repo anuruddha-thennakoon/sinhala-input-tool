@@ -11,7 +11,7 @@ OUT="$HERE/build"
 mkdir -p "$OUT"
 
 if [ "${1:-}" = "test" ]; then
-    swiftc -swift-version 5 "$HERE/Sources/KeyRouter.swift" "$HERE/Tests/RouterTests/main.swift" -o "$OUT/router_tests"
+    swiftc -swift-version 5 "$HERE/Sources/KeyRouter.swift" "$HERE/Sources/CaretLocator.swift" "$HERE/Tests/RouterTests/main.swift" -o "$OUT/router_tests"
     "$OUT/router_tests"
     exit 0
 fi
