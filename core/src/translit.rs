@@ -7,15 +7,27 @@ use std::collections::{BinaryHeap, HashSet};
 const HAL: char = '\u{0DCA}';
 const ZWJ: char = '\u{200D}';
 
+/// One rendering of the input. `open` is `closed` without the trailing
+/// hal-kirima that a still-unvowelled last consonant gets, so it can be used
+/// as a prefix while the user is mid-word.
+pub(crate) struct Variant {
+    pub closed: String,
+    pub open: String,
+}
+
 /// Returns up to `limit` unique Sinhala renderings of `input`, best first.
 pub fn transliterate(input: &str, limit: usize) -> Vec<String> {
+    variants(input, limit).into_iter().map(|v| v.closed).collect()
+}
+
+pub(crate) fn variants(input: &str, limit: usize) -> Vec<Variant> {
     if input.is_empty() || limit == 0 {
         return Vec::new();
     }
     let tokens = tokenize(input);
     let mut heap: BinaryHeap<(Reverse<u32>, Vec<usize>)> = BinaryHeap::new();
     let mut seen: HashSet<Vec<usize>> = HashSet::new();
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<Variant> = Vec::new();
 
     push(&mut heap, &mut seen, &tokens, vec![0; tokens.len()]);
 
@@ -28,9 +40,13 @@ pub fn transliterate(input: &str, limit: usize) -> Vec<String> {
         }
         budget -= 1;
         choice.reverse(); // heap stores it reversed for tie-breaking
-        let s = render(&tokens, &choice);
-        if !out.contains(&s) {
-            out.push(s);
+        let (closed, pending) = render(&tokens, &choice);
+        if !out.iter().any(|v| v.closed == closed) {
+            let open = match closed.strip_suffix(HAL) {
+                Some(stem) if pending => stem.to_string(),
+                _ => closed.clone(),
+            };
+            out.push(Variant { closed, open });
         }
         for i in 0..choice.len() {
             if choice[i] + 1 < tokens[i].option_count() {
@@ -109,7 +125,8 @@ fn push(
     }
 }
 
-fn render(tokens: &[Token], choice: &[usize]) -> String {
+/// Returns the text and whether it ended on a consonant awaiting a vowel.
+fn render(tokens: &[Token], choice: &[usize]) -> (String, bool) {
     let mut out = String::new();
     let mut pending = false; // a consonant is awaiting a vowel or hal-kirima
     for (tok, &c) in tokens.iter().zip(choice) {
@@ -145,5 +162,5 @@ fn render(tokens: &[Token], choice: &[usize]) -> String {
     if pending {
         out.push(HAL);
     }
-    out
+    (out, pending)
 }

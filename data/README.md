@@ -16,3 +16,13 @@ Each source's licence must be recorded here before it is added.
 
 Decision: Phase 2 builds the frequency list from Sinhala Wikipedia.
 Open risk: Wikipedia text is formal, so colloquial words may rank poorly; evaluate in Phase 2.
+
+## Dictionary build (Phase 2)
+
+```
+python3 -I data/build_dictionary.py <siwiki-latest-pages-articles.xml.bz2> core/data/si-words.tsv 3
+```
+Download the dump into its own empty directory (it is untrusted input), outside the repo.
+Result on the 2026-10-01 dump: 135,586 pages, 506,483 distinct tokens, 152,034 kept
+(count >= 3), 3.9 MB. Embedded into `sinhala-core` with `include_str!`.
+Measured (release, Apple Silicon): load 10 ms once; `suggest` 10-70 microseconds per call.
