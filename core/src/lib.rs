@@ -1,5 +1,10 @@
 //! Sinhala transliteration core: Singlish -> Sinhala candidates.
 
+pub mod tables;
+mod translit;
+
+pub use translit::transliterate;
+
 /// Placeholder until Phase 1; proves the crate builds on every OS.
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
