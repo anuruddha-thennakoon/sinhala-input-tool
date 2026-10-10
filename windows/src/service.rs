@@ -5,13 +5,15 @@
 //! service lives on the host app's UI thread (apartment-threaded), so shared state is
 //! `Rc<RefCell<..>>`; no borrow is ever held across a call into TSF.
 
+use crate::config;
 use crate::keys::{route, KeyAction, Mods};
+use crate::langbar::LangBarButton;
 use crate::log::log;
 use crate::popup::Popup;
 use sinhala_core::{Dictionary, Session};
 use std::cell::RefCell;
 use std::rc::Rc;
-use windows::core::{implement, IUnknownImpl, Interface, Result, BOOL};
+use windows::core::{implement, AsImpl, IUnknownImpl, Interface, Result, BOOL};
 use windows::Win32::Foundation::{E_FAIL, LPARAM, RECT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, VK_CAPITAL, VK_CONTROL, VK_MENU, VK_SHIFT,
@@ -20,7 +22,8 @@ use windows::Win32::UI::TextServices::*;
 
 pub static OBJECT_COUNT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-struct Inner {
+pub(crate) struct Inner {
+    pub(crate) enabled: bool,
     tid: u32,
     thread_mgr: Option<ITfThreadMgr>,
     session: Session<'static>,
@@ -29,9 +32,10 @@ struct Inner {
     /// This service as a composition sink. Holds a reference to ourselves, so it is
     /// set in Activate and cleared in Deactivate to break the cycle.
     sink: Option<ITfCompositionSink>,
+    langbar: Option<ITfLangBarItemButton>,
 }
 
-type Shared = Rc<RefCell<Inner>>;
+pub(crate) type Shared = Rc<RefCell<Inner>>;
 
 #[implement(ITfTextInputProcessorEx, ITfKeyEventSink, ITfCompositionSink)]
 pub struct TextService {
@@ -43,6 +47,8 @@ impl TextService {
         OBJECT_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         TextService {
             inner: Rc::new(RefCell::new(Inner {
+                enabled: config::load_enabled(),
+                langbar: None,
                 tid: 0,
                 thread_mgr: None,
                 session: Session::new(Dictionary::embedded()),
@@ -77,9 +83,15 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
             inner.sink = None;
             inner.thread_mgr.take()
         };
+        let langbar = self.inner.borrow_mut().langbar.take();
         if let Some(tm) = thread_mgr {
             let tid = self.inner.borrow().tid;
-            unsafe { tm.cast::<ITfKeystrokeMgr>()?.UnadviseKeyEventSink(tid)? };
+            unsafe {
+                if let (Some(button), Ok(mgr)) = (&langbar, tm.cast::<ITfLangBarItemMgr>()) {
+                    let _ = mgr.RemoveItem(button);
+                }
+                tm.cast::<ITfKeystrokeMgr>()?.UnadviseKeyEventSink(tid)?
+            };
         }
         self.inner.borrow_mut().tid = 0;
         Ok(())
@@ -100,9 +112,18 @@ impl TextService_Impl {
         unsafe { tm.cast::<ITfKeystrokeMgr>()?.AdviseKeyEventSink(tid, &sink, true)? };
         let mut inner = self.inner.borrow_mut();
         inner.tid = tid;
-        inner.thread_mgr = Some(tm);
+        inner.enabled = config::load_enabled();
         inner.popup = Popup::new().ok();
         inner.sink = Some(self.to_interface());
+
+        // Tray / language-bar button. Failure here must not stop typing from working.
+        let button: ITfLangBarItemButton = LangBarButton::new(self.inner.clone()).into();
+        if let Ok(mgr) = tm.cast::<ITfLangBarItemMgr>() {
+            if unsafe { mgr.AddItem(&button) }.is_ok() {
+                inner.langbar = Some(button);
+            }
+        }
+        inner.thread_mgr = Some(tm);
         Ok(())
     }
 }
@@ -110,7 +131,15 @@ impl TextService_Impl {
 // ----------------------------------------------------------------- key events
 
 impl ITfKeyEventSink_Impl for TextService_Impl {
-    fn OnSetFocus(&self, _foreground: BOOL) -> Result<()> {
+    fn OnSetFocus(&self, foreground: BOOL) -> Result<()> {
+        if foreground.as_bool() {
+            // Another process may have toggled typing while it had focus.
+            let on = config::load_enabled();
+            let changed = std::mem::replace(&mut self.inner.borrow_mut().enabled, on) != on;
+            if changed {
+                notify_langbar(&self.inner);
+            }
+        }
         Ok(())
     }
 
@@ -159,7 +188,7 @@ impl TextService_Impl {
     }
 
     fn action_for(&self, wparam: WPARAM) -> KeyAction {
-        route(wparam.0 as u32, read_mods(), self.is_composing())
+        route(wparam.0 as u32, read_mods(), self.is_composing(), self.inner.borrow().enabled)
     }
 
     /// Applies `action` to the session and the document. Returns whether the key was eaten.
@@ -182,6 +211,14 @@ impl TextService_Impl {
             KeyAction::Cancel => {
                 self.inner.borrow_mut().session.cancel();
                 true
+            }
+            KeyAction::ToggleEnabled => {
+                let pending = self.inner.borrow_mut().session.commit();
+                if let Some(text) = pending {
+                    finish(&self.inner, ctx, &text)?;
+                }
+                toggle_enabled(&self.inner);
+                return Ok(true);
             }
             KeyAction::Commit | KeyAction::CommitAndSpace | KeyAction::CommitThenPassThrough | KeyAction::PickNumber(_) => {
                 let text = {
@@ -335,4 +372,30 @@ unsafe fn composition_range(inner: &Shared, ctx: &ITfContext, ec: u32) -> Result
     let range = comp.GetRange()?;
     inner.borrow_mut().composition = Some(comp);
     Ok(range)
+}
+
+/// Flips Sinhala typing on/off, persists it, and refreshes the tray icon. Any word in
+/// progress is abandoned (callers that have a document context commit it first).
+pub(crate) fn toggle_enabled(inner: &Shared) {
+    let on = {
+        let mut i = inner.borrow_mut();
+        i.enabled = !i.enabled;
+        i.session.cancel();
+        i.composition = None;
+        if let Some(p) = &i.popup {
+            p.hide();
+        }
+        i.enabled
+    };
+    config::save_enabled(on);
+    log(format!("typing enabled = {on}"));
+    notify_langbar(inner);
+}
+
+fn notify_langbar(inner: &Shared) {
+    let button = inner.borrow().langbar.clone();
+    if let Some(button) = button {
+        let b: &LangBarButton = unsafe { button.as_impl() };
+        b.notify();
+    }
 }

@@ -5,8 +5,8 @@
 //! NULL session and then do nothing / return 0, NULL or false. Panics never
 //! cross the boundary. The header is generated into `include/sinhala_core.h`.
 
-use crate::{Dictionary, Session};
-use std::ffi::{c_char, CString};
+use crate::{about_text, Dictionary, Session, Settings};
+use std::ffi::{c_char, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
@@ -204,4 +204,46 @@ pub unsafe extern "C" fn sinhala_select_number(s: *mut SinhalaSession, n: u32) -
 #[no_mangle]
 pub unsafe extern "C" fn sinhala_cancel(s: *mut SinhalaSession) {
     unsafe { with(s, (), |se| se.cancel()) }
+}
+
+/// Reads the `enabled` setting from the UTF-8 settings file at `path`.
+/// Returns true (the default) if `path` is NULL, missing or unreadable.
+///
+/// # Safety
+/// `path` must be NULL or a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn sinhala_settings_load_enabled(path: *const c_char) -> bool {
+    if path.is_null() {
+        return true;
+    }
+    // SAFETY: caller guarantees a valid NUL-terminated string.
+    let Ok(path) = unsafe { CStr::from_ptr(path) }.to_str() else {
+        return true;
+    };
+    guard(true, || Settings::load(std::path::Path::new(path)).enabled)
+}
+
+/// Writes the `enabled` setting to the settings file at `path`. Returns false on
+/// failure (NULL or invalid path, or the file could not be written).
+///
+/// # Safety
+/// `path` must be NULL or a valid NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn sinhala_settings_save_enabled(path: *const c_char, enabled: bool) -> bool {
+    if path.is_null() {
+        return false;
+    }
+    // SAFETY: caller guarantees a valid NUL-terminated string.
+    let Ok(path) = unsafe { CStr::from_ptr(path) }.to_str() else {
+        return false;
+    };
+    guard(false, || {
+        Settings { enabled }.save(std::path::Path::new(path)).is_ok()
+    })
+}
+
+/// The About-box text (version and licence attribution). Free with `sinhala_string_free`.
+#[no_mangle]
+pub extern "C" fn sinhala_about_text() -> *mut c_char {
+    guard(ptr::null_mut(), || to_c(about_text()))
 }

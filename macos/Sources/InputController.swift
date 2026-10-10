@@ -7,6 +7,7 @@ import InputMethodKit
 final class SinhalaInputController: IMKInputController {
     private let core = SinhalaCore()
     private static let panel = CandidatePanel()
+    private static let toast = ToastPanel()
     private let noRange = NSRange(location: NSNotFound, length: NSNotFound)
 
     override func recognizedEvents(_ sender: Any!) -> Int {
@@ -21,7 +22,8 @@ final class SinhalaInputController: IMKInputController {
         let action = KeyRouter.route(
             keyCode: event.keyCode, chars: event.characters ?? "",
             command: flags.contains(.command), control: flags.contains(.control),
-            option: flags.contains(.option), composing: core.isComposing)
+            option: flags.contains(.option), shift: flags.contains(.shift),
+            composing: core.isComposing, enabled: AppState.shared.enabled)
 
         switch action {
         case .passThrough:
@@ -49,14 +51,61 @@ final class SinhalaInputController: IMKInputController {
         case .commitThenPassThrough:
             commitSelection(client)
             return false
+        case .toggleEnabled:
+            if core.isComposing { commitSelection(client) }
+            toggleEnabled(client)
         }
         return true
+    }
+
+    // MARK: - Input menu (the Sinhala icon in the menu bar)
+
+    override func menu() -> NSMenu! {
+        let menu = NSMenu(title: "Sinhala Input")
+        let toggle = NSMenuItem(title: "Sinhala typing  (Ctrl+Shift+Space)",
+                                action: #selector(toggleFromMenu(_:)), keyEquivalent: "")
+        toggle.target = self
+        toggle.state = AppState.shared.enabled ? .on : .off
+        menu.addItem(toggle)
+        menu.addItem(.separator())
+        let about = NSMenuItem(title: "About Sinhala Input…", action: #selector(showAbout(_:)), keyEquivalent: "")
+        about.target = self
+        menu.addItem(about)
+        return menu
+    }
+
+    @objc private func toggleFromMenu(_ sender: Any?) {
+        if let client = client() {
+            if core.isComposing { commitSelection(client) }
+            toggleEnabled(client)
+        } else {
+            AppState.shared.toggle()
+        }
+    }
+
+    @objc private func showAbout(_ sender: Any?) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Sinhala Input"
+        alert.informativeText = aboutText()
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    private func toggleEnabled(_ client: IMKTextInput) {
+        let on = AppState.shared.toggle()
+        Self.toast.show(on ? "Sinhala typing: ON" : "Sinhala typing: OFF", near: caretRect(client))
     }
 
     // The app is taking focus away or asked us to finish: don't lose what was typed.
     override func commitComposition(_ sender: Any!) {
         guard let client = sender as? IMKTextInput else { return }
         commitSelection(client)
+    }
+
+    override func activateServer(_ sender: Any!) {
+        AppState.shared.reload()   // picks up a change made while another app had focus
+        super.activateServer(sender)
     }
 
     override func deactivateServer(_ sender: Any!) {

@@ -9,8 +9,9 @@ func check(_ got: KeyAction, _ want: KeyAction, _ label: String) {
     }
 }
 func r(_ code: UInt16, _ chars: String = "", cmd: Bool = false, ctrl: Bool = false,
-       opt: Bool = false, composing: Bool) -> KeyAction {
-    KeyRouter.route(keyCode: code, chars: chars, command: cmd, control: ctrl, option: opt, composing: composing)
+       opt: Bool = false, shift: Bool = false, composing: Bool, enabled: Bool = true) -> KeyAction {
+    KeyRouter.route(keyCode: code, chars: chars, command: cmd, control: ctrl, option: opt,
+                    shift: shift, composing: composing, enabled: enabled)
 }
 
 // Idle: only letters start composition.
@@ -49,6 +50,24 @@ check(r(7, "x", opt: true, composing: true), .commitThenPassThrough, "option-x c
 
 // Non-ASCII letters (other keyboard layouts) are not Singlish input.
 check(r(0, "ä", composing: false), .passThrough, "non-ascii letter")
+
+// Toggle key (Ctrl+Shift+Space) works in every state.
+for composing in [false, true] {
+    for enabled in [false, true] {
+        check(r(49, " ", ctrl: true, shift: true, composing: composing, enabled: enabled),
+              .toggleEnabled, "toggle composing=\(composing) enabled=\(enabled)")
+    }
+}
+check(r(49, " ", ctrl: true, composing: true), .commitThenPassThrough, "ctrl-space is not the toggle")
+check(r(49, " ", shift: true, composing: true), .commitAndSpace, "shift-space is not the toggle")
+check(r(49, " ", cmd: true, ctrl: true, shift: true, composing: true), .commitThenPassThrough, "cmd-ctrl-shift-space is not the toggle")
+
+// Disabled: everything except the toggle passes through untouched.
+for composing in [false, true] {
+    for (code, chars) in [(0 as UInt16, "a"), (49, " "), (36, "\r"), (51, ""), (125, ""), (18, "1"), (123, "")] {
+        check(r(code, chars, composing: composing, enabled: false), .passThrough, "disabled key \(code) composing=\(composing)")
+    }
+}
 
 if failures == 0 { print("KeyRouter: all checks passed") }
 exit(failures == 0 ? 0 : 1)

@@ -16,6 +16,8 @@ pub enum KeyAction {
     PickNumber(u32),
     Cancel,
     CommitThenPassThrough,
+    /// Ctrl+Shift+Space: turn Sinhala typing on or off.
+    ToggleEnabled,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -37,7 +39,14 @@ pub mod vk {
     pub const DOWN: u32 = 0x28;
 }
 
-pub fn route(vk_code: u32, mods: Mods, composing: bool) -> KeyAction {
+/// `enabled` is the Sinhala-typing switch; when off only the toggle key is handled.
+pub fn route(vk_code: u32, mods: Mods, composing: bool, enabled: bool) -> KeyAction {
+    if mods.ctrl && mods.shift && !mods.alt && vk_code == vk::SPACE {
+        return KeyAction::ToggleEnabled;
+    }
+    if !enabled {
+        return KeyAction::PassThrough;
+    }
     // Shortcuts (Ctrl-C, Alt-F4, AltGr combos) belong to the app, not the IME.
     if mods.ctrl || mods.alt {
         return if composing {
@@ -84,7 +93,7 @@ mod tests {
     use KeyAction::*;
 
     fn r(vk: u32, composing: bool) -> KeyAction {
-        route(vk, Mods::default(), composing)
+        route(vk, Mods::default(), composing, true)
     }
 
     #[test]
@@ -102,10 +111,10 @@ mod tests {
     #[test]
     fn case_follows_shift_xor_caps() {
         let m = |shift, caps| Mods { shift, caps, ..Mods::default() };
-        assert_eq!(route(0x4E, m(true, false), false), Type('N'));
-        assert_eq!(route(0x4E, m(false, true), false), Type('N'));
-        assert_eq!(route(0x4E, m(true, true), false), Type('n'));
-        assert_eq!(route(0x4E, m(false, false), false), Type('n'));
+        assert_eq!(route(0x4E, m(true, false), false, true), Type('N'));
+        assert_eq!(route(0x4E, m(false, true), false, true), Type('N'));
+        assert_eq!(route(0x4E, m(true, true), false, true), Type('n'));
+        assert_eq!(route(0x4E, m(false, false), false, true), Type('n'));
     }
 
     #[test]
@@ -135,7 +144,7 @@ mod tests {
     #[test]
     fn shifted_digits_are_punctuation_not_picks() {
         let shift = Mods { shift: true, ..Mods::default() };
-        assert_eq!(route(0x31, shift, true), CommitThenPassThrough); // '!'
+        assert_eq!(route(0x31, shift, true, true), CommitThenPassThrough); // '!'
     }
 
     #[test]
@@ -147,12 +156,38 @@ mod tests {
     }
 
     #[test]
+    fn toggle_key_works_in_every_state() {
+        let m = Mods { ctrl: true, shift: true, ..Mods::default() };
+        for composing in [false, true] {
+            for enabled in [false, true] {
+                assert_eq!(route(vk::SPACE, m, composing, enabled), ToggleEnabled);
+            }
+        }
+        // Not the toggle: Ctrl+Space, Shift+Space, Ctrl+Shift+Alt+Space.
+        let ctrl = Mods { ctrl: true, ..Mods::default() };
+        let shift = Mods { shift: true, ..Mods::default() };
+        let all = Mods { ctrl: true, shift: true, alt: true, ..Mods::default() };
+        assert_ne!(route(vk::SPACE, ctrl, true, true), ToggleEnabled);
+        assert_ne!(route(vk::SPACE, shift, true, true), ToggleEnabled);
+        assert_ne!(route(vk::SPACE, all, true, true), ToggleEnabled);
+    }
+
+    #[test]
+    fn disabled_passes_everything_else_through() {
+        for composing in [false, true] {
+            for vk in [0x41, 0x5A, vk::SPACE, vk::RETURN, vk::BACK, vk::DOWN, 0x31, 0x25] {
+                assert_eq!(route(vk, Mods::default(), composing, false), PassThrough, "vk {vk:#x}");
+            }
+        }
+    }
+
+    #[test]
     fn shortcuts_are_never_swallowed() {
         let ctrl = Mods { ctrl: true, ..Mods::default() };
         let alt = Mods { alt: true, ..Mods::default() };
-        assert_eq!(route(0x43, ctrl, false), PassThrough);
-        assert_eq!(route(0x43, ctrl, true), CommitThenPassThrough);
-        assert_eq!(route(0x46, alt, false), PassThrough);
-        assert_eq!(route(vk::SPACE, ctrl, true), CommitThenPassThrough);
+        assert_eq!(route(0x43, ctrl, false, true), PassThrough);
+        assert_eq!(route(0x43, ctrl, true, true), CommitThenPassThrough);
+        assert_eq!(route(0x46, alt, false, true), PassThrough);
+        assert_eq!(route(vk::SPACE, ctrl, true, true), CommitThenPassThrough);
     }
 }

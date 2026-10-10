@@ -4,11 +4,13 @@ pub mod ffi;
 pub mod tables;
 mod dictionary;
 mod session;
+mod settings;
 mod suggest;
 mod translit;
 
 pub use dictionary::Dictionary;
 pub use session::{PopupView, Session, PAGE_SIZE};
+pub use settings::{about_text, Settings};
 pub use suggest::suggest;
 pub use translit::transliterate;
 

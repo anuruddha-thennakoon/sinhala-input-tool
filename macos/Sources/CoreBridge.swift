@@ -42,3 +42,38 @@ final class SinhalaCore {
                      page: Int(sinhala_page(handle)), pageCount: Int(sinhala_page_count(handle)))
     }
 }
+
+/// Persistent settings (shared file format with Windows, handled by the Rust core).
+enum SettingsStore {
+    static var path: String {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return base.appendingPathComponent("SinhalaInput/settings.ini").path
+    }
+    static func loadEnabled() -> Bool { path.withCString { sinhala_settings_load_enabled($0) } }
+    @discardableResult
+    static func saveEnabled(_ enabled: Bool) -> Bool {
+        path.withCString { sinhala_settings_save_enabled($0, enabled) }
+    }
+}
+
+func aboutText() -> String {
+    guard let p = sinhala_about_text() else { return "Sinhala Input" }
+    defer { sinhala_string_free(p) }
+    return String(cString: p)
+}
+
+/// Process-wide switch. One IME process serves every app, so this is the single
+/// source of truth; it is persisted on every change and re-read on activation.
+final class AppState {
+    static let shared = AppState()
+    private(set) var enabled = SettingsStore.loadEnabled()
+
+    func reload() { enabled = SettingsStore.loadEnabled() }
+
+    @discardableResult
+    func toggle() -> Bool {
+        enabled.toggle()
+        SettingsStore.saveEnabled(enabled)
+        return enabled
+    }
+}

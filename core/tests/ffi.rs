@@ -85,3 +85,24 @@ fn invalid_codepoint_is_rejected() {
     }
     let _ = CString::new("x");
 }
+
+#[test]
+fn settings_and_about_through_c_abi() {
+    let dir = std::env::temp_dir().join(format!("sinhala-ffi-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = CString::new(dir.join("settings.ini").to_str().unwrap()).unwrap();
+    unsafe {
+        assert!(sinhala_settings_load_enabled(path.as_ptr()), "default is enabled");
+        assert!(sinhala_settings_save_enabled(path.as_ptr(), false));
+        assert!(!sinhala_settings_load_enabled(path.as_ptr()));
+        assert!(sinhala_settings_save_enabled(path.as_ptr(), true));
+        assert!(sinhala_settings_load_enabled(path.as_ptr()));
+        // NULL path: defaults / failure, no crash.
+        assert!(sinhala_settings_load_enabled(ptr::null()));
+        assert!(!sinhala_settings_save_enabled(ptr::null(), false));
+
+        let about = take(sinhala_about_text()).unwrap();
+        assert!(about.contains("Wikipedia"));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

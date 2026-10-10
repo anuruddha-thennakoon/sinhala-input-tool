@@ -6,9 +6,13 @@
 pub mod keys;
 
 #[cfg(windows)]
+mod config;
+#[cfg(windows)]
 mod dll;
 #[cfg(windows)]
 mod guids;
+#[cfg(windows)]
+mod langbar;
 #[cfg(windows)]
 mod log;
 #[cfg(windows)]

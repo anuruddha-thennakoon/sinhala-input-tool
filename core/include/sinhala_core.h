@@ -109,6 +109,23 @@ char *sinhala_select_number(struct SinhalaSession *s, uint32_t n);
 // `s` must be NULL or a live session handle.
 void sinhala_cancel(struct SinhalaSession *s);
 
+// Reads the `enabled` setting from the UTF-8 settings file at `path`.
+// Returns true (the default) if `path` is NULL, missing or unreadable.
+//
+// # Safety
+// `path` must be NULL or a valid NUL-terminated string.
+bool sinhala_settings_load_enabled(const char *path);
+
+// Writes the `enabled` setting to the settings file at `path`. Returns false on
+// failure (NULL or invalid path, or the file could not be written).
+//
+// # Safety
+// `path` must be NULL or a valid NUL-terminated string.
+bool sinhala_settings_save_enabled(const char *path, bool enabled);
+
+// The About-box text (version and licence attribution). Free with `sinhala_string_free`.
+char *sinhala_about_text(void);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

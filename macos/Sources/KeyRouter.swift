@@ -11,6 +11,7 @@ enum KeyAction: Equatable {
     case pickNumber(Int)     // 1...6: commit that row of the current page
     case cancel              // Esc
     case commitThenPassThrough
+    case toggleEnabled       // Ctrl+Shift+Space: Sinhala typing on/off
 }
 
 enum KeyCodes {
@@ -26,8 +27,14 @@ enum KeyCodes {
 }
 
 enum KeyRouter {
+    /// `enabled` is the Sinhala-typing switch; when off only the toggle key is handled.
     static func route(keyCode: UInt16, chars: String, command: Bool, control: Bool,
-                      option: Bool, composing: Bool) -> KeyAction {
+                      option: Bool, shift: Bool = false, composing: Bool,
+                      enabled: Bool = true) -> KeyAction {
+        if control && shift && !command && !option && keyCode == KeyCodes.space {
+            return .toggleEnabled
+        }
+        if !enabled { return .passThrough }
         // Shortcuts (Cmd-C, Ctrl-A, Option-x ...) belong to the app, not the IME.
         if command || control || option {
             return composing ? .commitThenPassThrough : .passThrough
