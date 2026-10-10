@@ -1,0 +1,4 @@
+/* Display names shown in System Settings > Keyboard > Input Sources and the input menu. */
+"CFBundleName" = "Sinhala Input";
+"CFBundleDisplayName" = "Sinhala Input";
+"com.itrowin.inputmethod.Sinhala.Sinhala" = "Sinhala Input";

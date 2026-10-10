@@ -48,6 +48,7 @@ rm -f "${SLICES[@]}"
 echo "Architectures: $(lipo -archs "$APP/Contents/MacOS/SinhalaInput")"
 
 cp "$HERE/Info.plist" "$APP/Contents/Info.plist"
+cp -R "$HERE/Resources/en.lproj" "$APP/Contents/Resources/"
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 
 echo "==> Icon"

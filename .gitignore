@@ -4,3 +4,4 @@ target/
 *.dll
 *.dylib
 macos/build/
+macos/build-root-owned/
