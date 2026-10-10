@@ -2,7 +2,7 @@
 //! on/off switch and an About box.
 
 use crate::guids::{CLSID_SINHALA_TIP, GUID_LANGBAR_ITEM};
-use crate::service::{toggle_enabled, Shared};
+use crate::service::{guard_err, toggle_enabled, Shared};
 use sinhala_core::about_text;
 use std::cell::RefCell;
 use windows::core::{implement, Interface, Ref, Result, BOOL, BSTR, GUID, IUnknown};
@@ -70,8 +70,10 @@ impl ITfLangBarItem_Impl for LangBarButton_Impl {
     }
 
     fn GetTooltipString(&self) -> Result<BSTR> {
-        let state = if self.enabled() { "On" } else { "Off" };
-        Ok(BSTR::from(format!("Sinhala Input: {state} (Ctrl+Shift+Space)")))
+        guard_err(|| {
+            let state = if self.enabled() { "On" } else { "Off" };
+            Ok(BSTR::from(format!("Sinhala Input: {state} (Ctrl+Shift+Space)")))
+        })
     }
 }
 
@@ -81,6 +83,24 @@ impl ITfLangBarItemButton_Impl for LangBarButton_Impl {
     }
 
     fn InitMenu(&self, menu: Ref<ITfMenu>) -> Result<()> {
+        guard_err(|| self.init_menu(menu))
+    }
+
+    fn OnMenuSelect(&self, id: u32) -> Result<()> {
+        guard_err(|| self.on_menu_select(id))
+    }
+
+    fn GetIcon(&self) -> Result<HICON> {
+        guard_err(|| make_icon(self.enabled()))
+    }
+
+    fn GetText(&self) -> Result<BSTR> {
+        Ok(BSTR::from("Sinhala Input"))
+    }
+}
+
+impl LangBarButton_Impl {
+    fn init_menu(&self, menu: Ref<ITfMenu>) -> Result<()> {
         let menu = menu.ok()?;
         let flags = if self.enabled() { TF_LBMENUF_CHECKED } else { 0 };
         unsafe {
@@ -104,7 +124,7 @@ impl ITfLangBarItemButton_Impl for LangBarButton_Impl {
         Ok(())
     }
 
-    fn OnMenuSelect(&self, id: u32) -> Result<()> {
+    fn on_menu_select(&self, id: u32) -> Result<()> {
         match id {
             MENU_TOGGLE => toggle_enabled(&self.shared),
             MENU_ABOUT => unsafe {
@@ -120,14 +140,6 @@ impl ITfLangBarItemButton_Impl for LangBarButton_Impl {
             _ => {}
         }
         Ok(())
-    }
-
-    fn GetIcon(&self) -> Result<HICON> {
-        make_icon(self.enabled())
-    }
-
-    fn GetText(&self) -> Result<BSTR> {
-        Ok(BSTR::from("Sinhala Input"))
     }
 }
 

@@ -311,6 +311,14 @@ unsafe fn chevron(hdc: HDC, l: &Layout, left: i32, top: i32, up: bool, enabled: 
 }
 
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    // A panic must not unwind out of a window procedure (it would abort the host app).
+    match std::panic::catch_unwind(|| unsafe { handle_message(hwnd, msg, wparam, lparam) }) {
+        Ok(result) => result,
+        Err(_) => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+    }
+}
+
+unsafe fn handle_message(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_PAINT => {
             let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as usize as *const RefCell<PaintState>;

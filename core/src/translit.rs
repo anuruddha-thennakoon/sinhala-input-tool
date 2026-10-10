@@ -5,6 +5,10 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashSet};
 
 const HAL: char = '\u{0DCA}';
+
+/// Only the last this-many tokens may take a non-default option. Real words are far
+/// shorter; the cap keeps the variant search bounded for pasted or runaway input.
+const VARY_WINDOW: usize = 32;
 const ZWJ: char = '\u{200D}';
 
 /// One rendering of the input. `open` is `closed` without the trailing
@@ -25,22 +29,27 @@ pub(crate) fn variants(input: &str, limit: usize) -> Vec<Variant> {
         return Vec::new();
     }
     let tokens = tokenize(input);
+    // Choice vectors cover only the trailing window; earlier tokens keep option 0.
+    let from = tokens.len().saturating_sub(VARY_WINDOW);
+    let window = &tokens[from..];
     let mut heap: BinaryHeap<(Reverse<u32>, Vec<usize>)> = BinaryHeap::new();
     let mut seen: HashSet<Vec<usize>> = HashSet::new();
     let mut out: Vec<Variant> = Vec::new();
 
-    push(&mut heap, &mut seen, &tokens, vec![0; tokens.len()]);
+    push(&mut heap, &mut seen, &tokens, from, vec![0; window.len()]);
 
     // Options within a token have strictly increasing penalties, so every
     // choice vector is reached via cheaper ones and pops in penalty order.
-    let mut budget = limit.saturating_mul(64);
+    let mut budget = limit.saturating_mul(8);
     while let Some((_, mut choice)) = heap.pop() {
         if out.len() >= limit || budget == 0 {
             break;
         }
         budget -= 1;
         choice.reverse(); // heap stores it reversed for tie-breaking
-        let (closed, pending) = render(&tokens, &choice);
+        let mut full = vec![0; from];
+        full.extend_from_slice(&choice);
+        let (closed, pending) = render(&tokens, &full);
         if !out.iter().any(|v| v.closed == closed) {
             let open = match closed.strip_suffix(HAL) {
                 Some(stem) if pending => stem.to_string(),
@@ -49,10 +58,10 @@ pub(crate) fn variants(input: &str, limit: usize) -> Vec<Variant> {
             out.push(Variant { closed, open });
         }
         for i in 0..choice.len() {
-            if choice[i] + 1 < tokens[i].option_count() {
+            if choice[i] + 1 < window[i].option_count() {
                 let mut next = choice.clone();
                 next[i] += 1;
-                push(&mut heap, &mut seen, &tokens, next);
+                push(&mut heap, &mut seen, &tokens, from, next);
             }
         }
     }
@@ -89,16 +98,17 @@ fn tokenize(input: &str) -> Vec<Token> {
     tokens
 }
 
-fn penalty(tokens: &[Token], choice: &[usize]) -> u32 {
+/// Penalty of a choice vector over `tokens[from..]`.
+fn penalty(tokens: &[Token], from: usize, choice: &[usize]) -> u32 {
     let last = tokens.len() - 1;
-    tokens
+    tokens[from..]
         .iter()
         .zip(choice)
         .enumerate()
-        .map(|(i, (t, &c))| match t {
+        .map(|(k, (t, &c))| match t {
             Token::Cons(o) => o[c].p,
             Token::Vowel(o) => {
-                if i == last {
+                if from + k == last {
                     o[c].pf
                 } else {
                     o[c].p
@@ -115,10 +125,11 @@ fn push(
     heap: &mut BinaryHeap<(Reverse<u32>, Vec<usize>)>,
     seen: &mut HashSet<Vec<usize>>,
     tokens: &[Token],
+    from: usize,
     choice: Vec<usize>,
 ) {
     if seen.insert(choice.clone()) {
-        let pen = penalty(tokens, &choice);
+        let pen = penalty(tokens, from, &choice);
         let mut rev = choice;
         rev.reverse();
         heap.push((Reverse(pen), rev));

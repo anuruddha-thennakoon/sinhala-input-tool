@@ -12,7 +12,7 @@
 | 5 Windows IME | compiles for x64 and x86; CI registers and activates it; not yet used in Word |
 | 6 Settings, toggle, tray, About | done in code; untested interactively |
 | 7 Packaging | macOS universal .pkg built; Windows MSI verified only by CI; all unsigned |
-| 8 Hardening | pending: your end-to-end testing, then bug fixes |
+| 8 Hardening | code-side done (panic guards, re-entrancy, bounded search, robustness tests); pending: your end-to-end testing in Word, then bug fixes |
 
 ## 1. Goal
 

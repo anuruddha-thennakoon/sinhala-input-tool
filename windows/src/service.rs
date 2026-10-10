@@ -22,13 +22,39 @@ use windows::Win32::UI::TextServices::*;
 
 pub static OBJECT_COUNT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
+/// This code runs inside other people's applications and is called through `extern
+/// "system"` COM entry points, where a Rust panic would abort the whole host app. Every
+/// entry point therefore runs under `guard_ok` / `guard_err`.
+pub(crate) fn guard_ok<T>(fallback: T, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|_| {
+        log("panic caught at COM boundary");
+        Ok(fallback)
+    })
+}
+
+pub(crate) fn guard_err<T>(f: impl FnOnce() -> Result<T>) -> Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|_| {
+        log("panic caught at COM boundary");
+        Err(E_FAIL.into())
+    })
+}
+
+/// Runs `f` on the popup with no `RefCell` borrow held: showing or hiding a window can
+/// pump messages that re-enter this service, and a held borrow would then panic.
+fn with_popup(inner: &Shared, f: impl FnOnce(&Popup)) {
+    let popup = inner.borrow().popup.clone();
+    if let Some(p) = popup {
+        f(&p);
+    }
+}
+
 pub(crate) struct Inner {
     pub(crate) enabled: bool,
     tid: u32,
     thread_mgr: Option<ITfThreadMgr>,
     session: Session<'static>,
     composition: Option<ITfComposition>,
-    popup: Option<Popup>,
+    popup: Option<Rc<Popup>>,
     /// This service as a composition sink. Holds a reference to ourselves, so it is
     /// set in Activate and cleared in Deactivate to break the cycle.
     sink: Option<ITfCompositionSink>,
@@ -70,10 +96,16 @@ impl Drop for TextService {
 
 impl ITfTextInputProcessor_Impl for TextService_Impl {
     fn Activate(&self, ptim: windows::core::Ref<ITfThreadMgr>, tid: u32) -> Result<()> {
-        self.activate(ptim, tid)
+        guard_err(|| self.activate(ptim, tid))
     }
 
     fn Deactivate(&self) -> Result<()> {
+        guard_err(|| self.deactivate())
+    }
+}
+
+impl TextService_Impl {
+    fn deactivate(&self) -> Result<()> {
         log("Deactivate");
         let thread_mgr = {
             let mut inner = self.inner.borrow_mut();
@@ -100,7 +132,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
 
 impl ITfTextInputProcessorEx_Impl for TextService_Impl {
     fn ActivateEx(&self, ptim: windows::core::Ref<ITfThreadMgr>, tid: u32, _flags: u32) -> Result<()> {
-        self.activate(ptim, tid)
+        guard_err(|| self.activate(ptim, tid))
     }
 }
 
@@ -113,7 +145,7 @@ impl TextService_Impl {
         let mut inner = self.inner.borrow_mut();
         inner.tid = tid;
         inner.enabled = config::load_enabled();
-        inner.popup = Popup::new().ok();
+        inner.popup = Popup::new().ok().map(Rc::new);
         inner.sink = Some(self.to_interface());
 
         // Tray / language-bar button. Failure here must not stop typing from working.
@@ -132,35 +164,48 @@ impl TextService_Impl {
 
 impl ITfKeyEventSink_Impl for TextService_Impl {
     fn OnSetFocus(&self, foreground: BOOL) -> Result<()> {
-        if foreground.as_bool() {
-            // Another process may have toggled typing while it had focus.
-            let on = config::load_enabled();
-            let changed = std::mem::replace(&mut self.inner.borrow_mut().enabled, on) != on;
-            if changed {
-                notify_langbar(&self.inner);
+        guard_ok((), || {
+            if foreground.as_bool() {
+                // Another process may have toggled typing while it had focus.
+                let on = config::load_enabled();
+                let changed = std::mem::replace(&mut self.inner.borrow_mut().enabled, on) != on;
+                if changed {
+                    notify_langbar(&self.inner);
+                }
+            } else {
+                // Don't leave a popup floating over another window. The composition
+                // text stays; the next key brings the popup back.
+                with_popup(&self.inner, |p| p.hide());
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     fn OnTestKeyDown(&self, _pic: windows::core::Ref<ITfContext>, wparam: WPARAM, _lparam: LPARAM) -> Result<BOOL> {
-        Ok(BOOL::from(self.action_for(wparam) != KeyAction::PassThrough))
+        guard_ok(BOOL::from(false), || Ok(BOOL::from(self.action_for(wparam) != KeyAction::PassThrough)))
     }
 
     fn OnTestKeyUp(&self, _pic: windows::core::Ref<ITfContext>, wparam: WPARAM, _lparam: LPARAM) -> Result<BOOL> {
         // Swallow the key-up of keys whose key-down we ate, so the app never sees half a keystroke.
-        Ok(BOOL::from(self.action_for(wparam) != KeyAction::PassThrough && self.is_composing()))
+        guard_ok(BOOL::from(false), || {
+            Ok(BOOL::from(self.action_for(wparam) != KeyAction::PassThrough && self.is_composing()))
+        })
     }
 
     fn OnKeyDown(&self, pic: windows::core::Ref<ITfContext>, wparam: WPARAM, _lparam: LPARAM) -> Result<BOOL> {
-        let ctx: ITfContext = pic.ok()?.clone();
-        let action = self.action_for(wparam);
-        log(format!("OnKeyDown vk={:#x} -> {action:?}", wparam.0));
-        Ok(BOOL::from(self.perform(&ctx, action)?))
+        // On any failure or panic the key is NOT eaten, so typing never gets stuck.
+        guard_ok(BOOL::from(false), || {
+            let ctx: ITfContext = pic.ok()?.clone();
+            let action = self.action_for(wparam);
+            log(format!("OnKeyDown vk={:#x} -> {action:?}", wparam.0));
+            Ok(BOOL::from(self.perform(&ctx, action)?))
+        })
     }
 
     fn OnKeyUp(&self, _pic: windows::core::Ref<ITfContext>, wparam: WPARAM, _lparam: LPARAM) -> Result<BOOL> {
-        Ok(BOOL::from(self.action_for(wparam) != KeyAction::PassThrough && self.is_composing()))
+        guard_ok(BOOL::from(false), || {
+            Ok(BOOL::from(self.action_for(wparam) != KeyAction::PassThrough && self.is_composing()))
+        })
     }
 
     fn OnPreservedKey(&self, _pic: windows::core::Ref<ITfContext>, _guid: *const windows::core::GUID) -> Result<BOOL> {
@@ -171,14 +216,16 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
 impl ITfCompositionSink_Impl for TextService_Impl {
     /// The app or TSF ended our composition (focus change, document edit, ...).
     fn OnCompositionTerminated(&self, _ec: u32, _comp: windows::core::Ref<ITfComposition>) -> Result<()> {
-        log("OnCompositionTerminated");
-        let mut inner = self.inner.borrow_mut();
-        inner.composition = None;
-        inner.session.cancel();
-        if let Some(p) = &inner.popup {
-            p.hide();
-        }
-        Ok(())
+        guard_ok((), || {
+            log("OnCompositionTerminated");
+            {
+                let mut inner = self.inner.borrow_mut();
+                inner.composition = None;
+                inner.session.cancel();
+            }
+            with_popup(&self.inner, |p| p.hide());
+            Ok(())
+        })
     }
 }
 
@@ -268,10 +315,10 @@ struct EditSession {
 
 impl ITfEditSession_Impl for EditSession_Impl {
     fn DoEditSession(&self, ec: u32) -> Result<()> {
-        match self.f.borrow_mut().take() {
+        guard_err(|| match self.f.borrow_mut().take() {
             Some(f) => f(ec),
             None => Ok(()),
-        }
+        })
     }
 }
 
@@ -313,10 +360,11 @@ fn sync(inner: &Shared, ctx: &ITfContext) -> Result<()> {
         let mut clipped = BOOL::default();
         let view = ctx2.GetActiveView()?;
         view.GetTextExt(ec, &range, &mut rect, &mut clipped)?;
-        let guard = shared.borrow();
-        if let Some(popup) = &guard.popup {
-            popup.show(guard.session.view(), guard.session.buffer(), rect);
-        }
+        let (view, buffer) = {
+            let g = shared.borrow();
+            (g.session.view(), g.session.buffer().to_string())
+        };
+        with_popup(&shared, |p| p.show(view, &buffer, rect));
         Ok(())
     })
 }
@@ -353,9 +401,7 @@ fn finish(inner: &Shared, ctx: &ITfContext, text: &str) -> Result<()> {
         }
         Ok(())
     });
-    if let Some(p) = &inner.borrow().popup {
-        p.hide();
-    }
+    with_popup(inner, |p| p.hide());
     result
 }
 
@@ -382,11 +428,9 @@ pub(crate) fn toggle_enabled(inner: &Shared) {
         i.enabled = !i.enabled;
         i.session.cancel();
         i.composition = None;
-        if let Some(p) = &i.popup {
-            p.hide();
-        }
         i.enabled
     };
+    with_popup(inner, |p| p.hide());
     config::save_enabled(on);
     log(format!("typing enabled = {on}"));
     notify_langbar(inner);
