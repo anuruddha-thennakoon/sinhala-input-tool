@@ -3,3 +3,4 @@ target/
 *.o
 *.dll
 *.dylib
+macos/build/
