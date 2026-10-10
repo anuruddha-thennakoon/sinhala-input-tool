@@ -72,6 +72,7 @@ jobs:
           wix build -arch x64 -d Version=$version `
             -d X64Dll=target\x86_64-pc-windows-msvc\release\sinhala_tsf.dll `
             -d X86Dll=target\i686-pc-windows-msvc\release\sinhala_tsf.dll `
+            -d Icon=windows\installer\sinhala.ico `
             windows\installer\Package.wxs -o "SinhalaInput-$version-x64.msi"
           if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
           Get-ChildItem *.msi

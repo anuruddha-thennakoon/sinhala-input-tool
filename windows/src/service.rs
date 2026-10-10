@@ -6,6 +6,8 @@
 //! `Rc<RefCell<..>>`; no borrow is ever held across a call into TSF.
 
 use crate::config;
+use crate::display_attr::{DisplayAttrEnum, DisplayAttrInfo};
+use crate::guids::GUID_DISPLAY_ATTR_INPUT;
 use crate::keys::{route, KeyAction, Mods};
 use crate::langbar::LangBarButton;
 use crate::log::log;
@@ -13,8 +15,10 @@ use crate::popup::Popup;
 use sinhala_core::{Dictionary, Session};
 use std::cell::RefCell;
 use std::rc::Rc;
-use windows::core::{implement, AsImpl, IUnknownImpl, Interface, Result, BOOL};
-use windows::Win32::Foundation::{E_FAIL, LPARAM, RECT, WPARAM};
+use windows::core::{implement, AsImpl, IUnknownImpl, Interface, Result, BOOL, GUID};
+use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, LPARAM, RECT, WPARAM};
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, VK_CAPITAL, VK_CONTROL, VK_MENU, VK_SHIFT,
 };
@@ -59,11 +63,21 @@ pub(crate) struct Inner {
     /// set in Activate and cleared in Deactivate to break the cycle.
     sink: Option<ITfCompositionSink>,
     langbar: Option<ITfLangBarItemButton>,
+    /// Atom for our underline display attribute (0 if registration failed: no underline).
+    attr_atom: u32,
+    /// Cookie of our ITfThreadMgrEventSink registration, for Unadvise.
+    focus_cookie: Option<u32>,
 }
 
 pub(crate) type Shared = Rc<RefCell<Inner>>;
 
-#[implement(ITfTextInputProcessorEx, ITfKeyEventSink, ITfCompositionSink)]
+#[implement(
+    ITfTextInputProcessorEx,
+    ITfKeyEventSink,
+    ITfCompositionSink,
+    ITfThreadMgrEventSink,
+    ITfDisplayAttributeProvider
+)]
 pub struct TextService {
     inner: Shared,
 }
@@ -75,6 +89,8 @@ impl TextService {
             inner: Rc::new(RefCell::new(Inner {
                 enabled: config::load_enabled(),
                 langbar: None,
+                attr_atom: 0,
+                focus_cookie: None,
                 tid: 0,
                 thread_mgr: None,
                 session: Session::new(Dictionary::embedded()),
@@ -116,6 +132,12 @@ impl TextService_Impl {
             inner.thread_mgr.take()
         };
         let langbar = self.inner.borrow_mut().langbar.take();
+        let cookie = self.inner.borrow_mut().focus_cookie.take();
+        if let (Some(tm), Some(cookie)) = (&thread_mgr, cookie) {
+            if let Ok(source) = tm.cast::<ITfSource>() {
+                let _ = unsafe { source.UnadviseSink(cookie) };
+            }
+        }
         if let Some(tm) = thread_mgr {
             let tid = self.inner.borrow().tid;
             unsafe {
@@ -154,6 +176,17 @@ impl TextService_Impl {
             if unsafe { mgr.AddItem(&button) }.is_ok() {
                 inner.langbar = Some(button);
             }
+        }
+
+        // Commit a word in progress when the user moves to another document, and register
+        // the underline attribute. Neither is essential, so failures are ignored.
+        let focus_sink: ITfThreadMgrEventSink = self.to_interface();
+        if let Ok(source) = tm.cast::<ITfSource>() {
+            inner.focus_cookie =
+                unsafe { source.AdviseSink(&ITfThreadMgrEventSink::IID, &focus_sink) }.ok();
+        }
+        if let Ok(cat) = unsafe { CoCreateInstance::<_, ITfCategoryMgr>(&CLSID_TF_CategoryMgr, None, CLSCTX_INPROC_SERVER) } {
+            inner.attr_atom = unsafe { cat.RegisterGUID(&GUID_DISPLAY_ATTR_INPUT) }.unwrap_or(0);
         }
         inner.thread_mgr = Some(tm);
         Ok(())
@@ -345,6 +378,7 @@ fn sync(inner: &Shared, ctx: &ITfContext) -> Result<()> {
         let range = composition_range(&shared, &ctx2, ec)?;
         let text: Vec<u16> = buffer.encode_utf16().collect();
         range.SetText(ec, 0, &text)?;
+        underline(&shared, &ctx2, ec, &range);
 
         // Caret after the composition text.
         let end = range.Clone()?;
@@ -441,5 +475,72 @@ fn notify_langbar(inner: &Shared) {
     if let Some(button) = button {
         let b: &LangBarButton = unsafe { button.as_impl() };
         b.notify();
+    }
+}
+
+/// Marks `range` with our display attribute so the host draws it underlined.
+/// Cosmetic: any failure is ignored.
+unsafe fn underline(inner: &Shared, ctx: &ITfContext, ec: u32, range: &ITfRange) {
+    let atom = inner.borrow().attr_atom;
+    if atom == 0 {
+        return;
+    }
+    if let Ok(prop) = ctx.GetProperty(&GUID_PROP_ATTRIBUTE) {
+        let value = VARIANT::from(atom as i32);
+        let _ = prop.SetValue(ec, range, &value);
+    }
+}
+
+// ------------------------------------------------- focus changes between documents
+
+impl ITfThreadMgrEventSink_Impl for TextService_Impl {
+    fn OnInitDocumentMgr(&self, _dim: windows::core::Ref<ITfDocumentMgr>) -> Result<()> {
+        Ok(())
+    }
+
+    fn OnUninitDocumentMgr(&self, _dim: windows::core::Ref<ITfDocumentMgr>) -> Result<()> {
+        Ok(())
+    }
+
+    /// The user clicked into another document/field: finish the word in the one they left
+    /// instead of abandoning it (and its popup) behind.
+    fn OnSetFocus(&self, _focus: windows::core::Ref<ITfDocumentMgr>, prev: windows::core::Ref<ITfDocumentMgr>) -> Result<()> {
+        guard_ok((), || {
+            if !self.is_composing() {
+                return Ok(());
+            }
+            let text = self.inner.borrow_mut().session.commit();
+            let ctx = prev.ok().ok().and_then(|dim| unsafe { dim.GetTop() }.ok());
+            if let (Some(text), Some(ctx)) = (text, ctx) {
+                // May fail if the old document no longer accepts edits; nothing more to do then.
+                let _ = finish(&self.inner, &ctx, &text);
+            }
+            self.inner.borrow_mut().composition = None;
+            with_popup(&self.inner, |p| p.hide());
+            Ok(())
+        })
+    }
+
+    fn OnPushContext(&self, _ctx: windows::core::Ref<ITfContext>) -> Result<()> {
+        Ok(())
+    }
+
+    fn OnPopContext(&self, _ctx: windows::core::Ref<ITfContext>) -> Result<()> {
+        Ok(())
+    }
+}
+
+// ----------------------------------------------------------- display attributes
+
+impl ITfDisplayAttributeProvider_Impl for TextService_Impl {
+    fn EnumDisplayAttributeInfo(&self) -> Result<IEnumTfDisplayAttributeInfo> {
+        Ok(DisplayAttrEnum::new().into())
+    }
+
+    fn GetDisplayAttributeInfo(&self, guid: *const GUID) -> Result<ITfDisplayAttributeInfo> {
+        if guid.is_null() || unsafe { *guid } != GUID_DISPLAY_ATTR_INPUT {
+            return Err(E_INVALIDARG.into());
+        }
+        Ok(DisplayAttrInfo.into())
     }
 }

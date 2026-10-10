@@ -8,6 +8,7 @@ Rust cdylib `sinhala_tsf.dll`: a Text Services Framework input method that links
 - `src/popup.rs`    GDI candidate popup (Google Input Tools style)
 - `src/langbar.rs`  tray / language-bar button: on-off state, menu, About
 - `src/config.rs`   settings file (`%APPDATA%\SinhalaInput\settings.ini`)
+- `src/display_attr.rs`  underline for the composition text
 - `src/dll.rs`      COM entry points + class factory
 - `src/registration.rs`  regsvr32: CLSID, TSF profile (si-LK), categories
 - `exports.def`     undecorated exports (needed for the 32-bit build)
@@ -40,8 +41,7 @@ calls are appended to `%LOCALAPPDATA%\SinhalaInput\debug.log`. Delete the file t
 ## Known gaps (Phase 5)
 
 - Not verified on a real Windows machine yet; CI only checks build + register/activate/unregister.
-- Composition text is not underlined (no display-attribute provider yet).
 - Plain popup window rather than TSF candidate-list UI elements, so Store/UWP apps and the
   Windows secure desktop will not show it.
-- No installer icon (Phase 7). No on-screen toast on toggle; the tray icon is the indicator.
+- No on-screen toast on toggle; the tray icon is the indicator.
 - Toggling from the tray menu abandons a word in progress (no document context to commit into).

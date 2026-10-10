@@ -58,12 +58,19 @@ pub fn register(dll_path: &str) -> Result<()> {
         let profiles: ITfInputProcessorProfileMgr =
             CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)?;
         let desc: Vec<u16> = TIP_DESCRIPTION.encode_utf16().collect();
+        // The installer puts sinhala.ico next to the DLLs; without it the profile just has no icon.
+        let icon: Vec<u16> = std::path::Path::new(dll_path)
+            .parent()
+            .map(|dir| dir.join("sinhala.ico"))
+            .filter(|p| p.exists())
+            .map(|p| p.to_string_lossy().encode_utf16().collect())
+            .unwrap_or_default();
         profiles.RegisterProfile(
             &CLSID_SINHALA_TIP,
             LANGID_SINHALA,
             &GUID_SINHALA_PROFILE,
             &desc,
-            &[],
+            &icon,
             0,
             HKL::default(),
             0,
@@ -102,6 +109,6 @@ pub fn unregister() -> Result<()> {
     Ok(())
 }
 
-fn categories_to_register() -> [GUID; 2] {
-    [GUID_TFCAT_TIP_KEYBOARD, GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT]
+fn categories_to_register() -> [GUID; 3] {
+    [GUID_TFCAT_TIP_KEYBOARD, GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER]
 }

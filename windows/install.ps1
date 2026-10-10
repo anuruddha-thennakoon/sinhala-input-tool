@@ -11,6 +11,7 @@ $dll64 = Join-Path $root 'target\x86_64-pc-windows-msvc\release\sinhala_tsf.dll'
 $dll32 = Join-Path $root 'target\i686-pc-windows-msvc\release\sinhala_tsf.dll'
 if (-not (Test-Path $dll64)) { throw "Build the 64-bit DLL first: $dll64" }
 
+Copy-Item (Join-Path $PSScriptRoot 'installer\sinhala.ico') (Join-Path $dest 'sinhala.ico') -Force  # profile icon
 Copy-Item $dll64 (Join-Path $dest 'sinhala_tsf_x64.dll') -Force
 & "$env:WINDIR\System32\regsvr32.exe" /s (Join-Path $dest 'sinhala_tsf_x64.dll')
 if ($LASTEXITCODE -ne 0) { throw "64-bit registration failed ($LASTEXITCODE)" }

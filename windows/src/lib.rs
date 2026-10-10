@@ -8,6 +8,8 @@ pub mod keys;
 #[cfg(windows)]
 mod config;
 #[cfg(windows)]
+mod display_attr;
+#[cfg(windows)]
 mod dll;
 #[cfg(windows)]
 mod guids;

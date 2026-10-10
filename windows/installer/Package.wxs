@@ -5,6 +5,7 @@
   does. Unregisters before the files are removed on uninstall and upgrade.
 
   Build:  wix build -arch x64 -d Version=0.1.0 -d X64Dll=<path> -d X86Dll=<path> \
+               -d Icon=windows\installer\sinhala.ico \
                windows\installer\Package.wxs -o SinhalaInput-0.1.0-x64.msi
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
@@ -15,6 +16,8 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of Sinhala Input is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <Property Id="ARPNOMODIFY" Value="1" />
+    <Icon Id="AppIcon" SourceFile="$(Icon)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="SinhalaInput" />
@@ -27,6 +30,9 @@
     <ComponentGroup Id="Binaries" Directory="INSTALLFOLDER">
       <Component Id="Dll64">
         <File Id="Dll64" Source="$(X64Dll)" Name="sinhala_tsf_x64.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="IconFile">
+        <File Id="IconFile" Source="$(Icon)" Name="sinhala.ico" KeyPath="yes" />
       </Component>
       <Component Id="Dll32">
         <File Id="Dll32" Source="$(X86Dll)" Name="sinhala_tsf_x86.dll" KeyPath="yes" />
