@@ -4,7 +4,9 @@ fn main() {
     println!("cargo:rerun-if-changed=exports.def");
     let msvc = std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
     if msvc {
-        let dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        println!("cargo:rustc-link-arg-cdylib=/DEF:{dir}\\exports.def");
+        // Native separators for the *build host* (this path is read by the linker running
+        // there), so this also works when cross-compiling from macOS or Linux.
+        let def = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("exports.def");
+        println!("cargo:rustc-link-arg-cdylib=/DEF:{}", def.display());
     }
 }

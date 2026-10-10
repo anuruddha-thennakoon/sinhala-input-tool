@@ -5,3 +5,4 @@ target/
 *.dylib
 macos/build/
 macos/build-root-owned/
+windows/dist/
