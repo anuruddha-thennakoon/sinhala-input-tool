@@ -63,9 +63,53 @@ jobs:
           $p = Start-Process "$env:WINDIR\SysWOW64\regsvr32.exe" -ArgumentList "/u /s `"$dll32`"" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "32-bit unregister failed: $($p.ExitCode)" }
           Write-Host "register/activate/unregister OK"
+      - name: Build portable zip
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path core/Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          $dir = "SinhalaInput-$version-portable"
+          New-Item -ItemType Directory $dir | Out-Null
+          Copy-Item target\x86_64-pc-windows-msvc\release\sinhala_tsf.dll "$dir\sinhala_tsf_x64.dll"
+          Copy-Item target\i686-pc-windows-msvc\release\sinhala_tsf.dll "$dir\sinhala_tsf_x86.dll"
+          Copy-Item windows\installer\sinhala.ico $dir
+          Copy-Item windows\install.ps1, windows\uninstall.ps1 $dir
+          Copy-Item windows\portable\* $dir
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+          Get-ChildItem *.zip
+      - name: Portable install / activate / uninstall
+        shell: pwsh
+        run: |
+          $dir = (Get-ChildItem -Directory SinhalaInput-*-portable).FullName
+          $clsid = '{060036E6-8D14-4BB1-AD0B-4513F41D3579}'
+          $key64 = "HKLM:\SOFTWARE\Classes\CLSID\$clsid"
+          $key32 = "HKLM:\SOFTWARE\WOW6432Node\Classes\CLSID\$clsid"
+          # Run the same script the user double-clicks (Install.cmd calls exactly this).
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$dir\install.ps1"
+          if ($LASTEXITCODE -ne 0) { throw "portable install failed: $LASTEXITCODE" }
+          foreach ($f in 'sinhala_tsf_x64.dll','sinhala_tsf_x86.dll','sinhala.ico') {
+            if (-not (Test-Path "$env:ProgramFiles\SinhalaInput\$f")) { throw "$f missing after install" }
+          }
+          if (-not (Test-Path "$key64\InprocServer32")) { throw "64-bit registry view not registered" }
+          if (-not (Test-Path "$key32\InprocServer32")) { throw "32-bit registry view not registered" }
+          $obj = [Activator]::CreateInstance([Type]::GetTypeFromCLSID([Guid]$clsid))
+          if ($null -eq $obj) { throw "CreateInstance returned null" }
+          [void][Runtime.InteropServices.Marshal]::ReleaseComObject($obj)
+          # Reinstall over the top (the upgrade path), then remove.
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$dir\install.ps1"
+          if ($LASTEXITCODE -ne 0) { throw "reinstall failed: $LASTEXITCODE" }
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$dir\uninstall.ps1"
+          if ((Test-Path $key64) -or (Test-Path $key32)) { throw "CLSID still registered after uninstall" }
+          if (Test-Path "$env:ProgramFiles\SinhalaInput") { throw "install folder still present" }
+          Write-Host "portable install/activate/reinstall/uninstall OK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable
+          path: SinhalaInput-*-portable.zip
       - name: Install WiX
+        if: ${{ !cancelled() }}
         run: dotnet tool install --global wix --version 5.0.2
       - name: Build MSI
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $version = (Select-String -Path core/Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
@@ -77,6 +121,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
           Get-ChildItem *.msi
       - name: MSI install / activate / uninstall
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $msi = (Get-ChildItem SinhalaInput-*-x64.msi).FullName
@@ -101,6 +146,7 @@ jobs:
           if (Test-Path "$env:ProgramFiles\SinhalaInput") { throw "install folder still present after uninstall" }
           Write-Host "MSI install/activate/uninstall OK"
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('SinhalaInput-*-x64.msi') != '' }}
         with:
           name: windows-msi
           path: SinhalaInput-*-x64.msi

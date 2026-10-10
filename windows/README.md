@@ -18,6 +18,13 @@ Rust cdylib `sinhala_tsf.dll`: a Text Services Framework input method that links
     cargo build --release -p sinhala-tsf --target x86_64-pc-windows-msvc
     cargo build --release -p sinhala-tsf --target i686-pc-windows-msvc   # 32-bit apps
 
+## Install without building
+
+Each CI run uploads two artifacts: `windows-msi` (the installer) and `windows-portable` (a zip with
+both DLLs, the icon, and `Install.cmd` / `Uninstall.cmd` that ask for administrator rights and
+register everything; double-click `Install.cmd`). The portable zip is built and tested first, so it
+exists even if the MSI step fails.
+
 ## Install for testing (elevated PowerShell)
 
     powershell -ExecutionPolicy Bypass -File windows\install.ps1

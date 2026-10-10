@@ -32,7 +32,8 @@ Both installers are **unsigned**, so the OS will warn about an unknown publisher
 3. System Settings > Keyboard > Input Sources > Edit > + > Sinhala > "Sinhala". Log out and in if it is not listed.
 
 **Windows 10 / 11**
-1. Run `SinhalaInput-<version>-x64.msi`. If SmartScreen warns: More info > Run anyway.
+1. Run `SinhalaInput-<version>-x64.msi` (or unzip `SinhalaInput-<version>-portable.zip` and double-click `Install.cmd`).
+   If SmartScreen warns: More info > Run anyway.
 2. Settings > Time & language > Language & region > add Sinhala, then enable the "Sinhala Input" keyboard.
 3. Switch to it with Win+Space.
 
