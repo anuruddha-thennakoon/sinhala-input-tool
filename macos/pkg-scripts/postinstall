@@ -1,0 +1,4 @@
+#!/bin/bash
+# Make sure a previously running copy is replaced by the newly installed one.
+killall SinhalaInput 2>/dev/null || true
+exit 0

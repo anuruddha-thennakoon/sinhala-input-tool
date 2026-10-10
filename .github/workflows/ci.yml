@@ -1,5 +1,8 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_call:   # lets release.yml reuse these builds
 jobs:
   core:
     strategy:
@@ -16,8 +19,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
       - run: macos/build.sh test
       - run: macos/build.sh
+      - run: macos/package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-pkg
+          path: macos/build/SinhalaInput-*.pkg
   windows-ime:
     runs-on: windows-latest
     steps:
@@ -53,3 +63,43 @@ jobs:
           $p = Start-Process "$env:WINDIR\SysWOW64\regsvr32.exe" -ArgumentList "/u /s `"$dll32`"" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "32-bit unregister failed: $($p.ExitCode)" }
           Write-Host "register/activate/unregister OK"
+      - name: Install WiX
+        run: dotnet tool install --global wix --version 5.0.2
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path core/Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          wix build -arch x64 -d Version=$version `
+            -d X64Dll=target\x86_64-pc-windows-msvc\release\sinhala_tsf.dll `
+            -d X86Dll=target\i686-pc-windows-msvc\release\sinhala_tsf.dll `
+            windows\installer\Package.wxs -o "SinhalaInput-$version-x64.msi"
+          if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
+          Get-ChildItem *.msi
+      - name: MSI install / activate / uninstall
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem SinhalaInput-*-x64.msi).FullName
+          $clsid = '{060036E6-8D14-4BB1-AD0B-4513F41D3579}'
+          $key64 = "HKLM:\SOFTWARE\Classes\CLSID\$clsid"
+          $key32 = "HKLM:\SOFTWARE\WOW6432Node\Classes\CLSID\$clsid"
+          function Fail($m) { Get-Content msi-install.log -Tail 60 -ErrorAction SilentlyContinue; throw $m }
+
+          $p = Start-Process msiexec -ArgumentList "/i `"$msi`" /qn /l*v msi-install.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Fail "install failed: $($p.ExitCode)" }
+          if (-not (Test-Path "$env:ProgramFiles\SinhalaInput\sinhala_tsf_x64.dll")) { Fail "x64 DLL missing" }
+          if (-not (Test-Path "$env:ProgramFiles\SinhalaInput\sinhala_tsf_x86.dll")) { Fail "x86 DLL missing" }
+          if (-not (Test-Path "$key64\InprocServer32")) { Fail "64-bit registry view not registered" }
+          if (-not (Test-Path "$key32\InprocServer32")) { Fail "32-bit registry view not registered" }
+          $obj = [Activator]::CreateInstance([Type]::GetTypeFromCLSID([Guid]$clsid))
+          if ($null -eq $obj) { Fail "CreateInstance returned null" }
+          [void][Runtime.InteropServices.Marshal]::ReleaseComObject($obj)
+
+          $p = Start-Process msiexec -ArgumentList "/x `"$msi`" /qn /l*v msi-uninstall.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content msi-uninstall.log -Tail 60; throw "uninstall failed: $($p.ExitCode)" }
+          if ((Test-Path $key64) -or (Test-Path $key32)) { throw "CLSID still registered after uninstall" }
+          if (Test-Path "$env:ProgramFiles\SinhalaInput") { throw "install folder still present after uninstall" }
+          Write-Host "MSI install/activate/uninstall OK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi
+          path: SinhalaInput-*-x64.msi

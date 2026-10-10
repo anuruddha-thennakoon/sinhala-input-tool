@@ -1,5 +1,19 @@
 # Sinhala Input Tool — Implementation Plan
 
+## Status (2026-10-10)
+
+| Phase | State |
+|---|---|
+| 0 Foundations | done |
+| 1 Transliteration engine | done (mapping from knowledge of Google's behaviour; unverified against the real tool) |
+| 2 Dictionary and ranking | done (Sinhala Wikipedia, 152k words) |
+| 3 Session, paging, C ABI, harness | done |
+| 4 macOS IME | built and launch-tested; not yet used in Word |
+| 5 Windows IME | compiles for x64 and x86; CI registers and activates it; not yet used in Word |
+| 6 Settings, toggle, tray, About | done in code; untested interactively |
+| 7 Packaging | macOS universal .pkg built; Windows MSI verified only by CI; all unsigned |
+| 8 Hardening | pending: your end-to-end testing, then bug fixes |
+
 ## 1. Goal
 
 A system-wide Sinhala input method (IME) in the style of Google Input Tools.

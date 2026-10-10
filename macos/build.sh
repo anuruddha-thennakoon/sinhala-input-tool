@@ -1,5 +1,6 @@
 #!/bin/bash
-# Builds macos/build/SinhalaInput.app (ad-hoc signed, host architecture).
+# Builds macos/build/SinhalaInput.app (universal arm64 + x86_64, ad-hoc signed).
+#   HOST_ONLY=1 macos/build.sh   this machine's architecture only
 #   macos/build.sh         build the app
 #   macos/build.sh test    run the KeyRouter unit tests only
 set -euo pipefail
@@ -15,19 +16,36 @@ if [ "${1:-}" = "test" ]; then
     exit 0
 fi
 
-echo "==> Rust core"
-(cd "$ROOT" && cargo build --release -p sinhala-core)
-
 APP="$OUT/SinhalaInput.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-echo "==> Swift"
-swiftc -O -swift-version 5 \
-    -import-objc-header "$HERE/Sources/Bridging-Header.h" -Xcc -I"$ROOT/core/include" \
-    "$HERE"/Sources/*.swift \
-    "$ROOT/target/release/libsinhala_core.a" \
-    -o "$APP/Contents/MacOS/SinhalaInput"
+# Universal binary: build each architecture separately, then merge with lipo.
+# HOST_ONLY=1 builds just this machine's architecture (faster for development).
+if [ "${HOST_ONLY:-0}" = "1" ]; then
+    ARCHS=("$(uname -m)")
+else
+    ARCHS=(arm64 x86_64)
+fi
+SLICES=()
+for arch in "${ARCHS[@]}"; do
+    case "$arch" in
+        arm64)  triple=aarch64-apple-darwin ;;
+        x86_64) triple=x86_64-apple-darwin ;;
+    esac
+    echo "==> Rust core ($triple)"
+    (cd "$ROOT" && cargo build --release -p sinhala-core --target "$triple")
+    echo "==> Swift ($arch)"
+    swiftc -O -swift-version 5 -target "$arch-apple-macos12.0" \
+        -import-objc-header "$HERE/Sources/Bridging-Header.h" -Xcc -I"$ROOT/core/include" \
+        "$HERE"/Sources/*.swift \
+        "$ROOT/target/$triple/release/libsinhala_core.a" \
+        -o "$OUT/SinhalaInput-$arch"
+    SLICES+=("$OUT/SinhalaInput-$arch")
+done
+lipo -create "${SLICES[@]}" -output "$APP/Contents/MacOS/SinhalaInput"
+rm -f "${SLICES[@]}"
+echo "Architectures: $(lipo -archs "$APP/Contents/MacOS/SinhalaInput")"
 
 cp "$HERE/Info.plist" "$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
