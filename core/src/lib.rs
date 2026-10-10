@@ -1,11 +1,14 @@
 //! Sinhala transliteration core: Singlish -> Sinhala candidates.
 
+pub mod ffi;
 pub mod tables;
 mod dictionary;
+mod session;
 mod suggest;
 mod translit;
 
 pub use dictionary::Dictionary;
+pub use session::{PopupView, Session, PAGE_SIZE};
 pub use suggest::suggest;
 pub use translit::transliterate;
 
