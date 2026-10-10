@@ -1,0 +1,5 @@
+Same as google input tool wich was introduced to windows 7 in early year.
+Able to install on windows and mac.
+Able to show on microdoft word.
+Main is to type sinhala. When typing sinhala sugesstions should be shown to select with arrow keys.
+Example ui attached from GoogleInput tool use same ui.
