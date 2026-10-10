@@ -17,6 +17,8 @@ const ZWJ: char = '\u{200D}';
 pub(crate) struct Variant {
     pub closed: String,
     pub open: String,
+    /// Rule penalty: 0 for the engine's best guess, higher for rarer spellings.
+    pub penalty: u32,
 }
 
 /// Returns up to `limit` unique Sinhala renderings of `input`, best first.
@@ -41,7 +43,7 @@ pub(crate) fn variants(input: &str, limit: usize) -> Vec<Variant> {
     // Options within a token have strictly increasing penalties, so every
     // choice vector is reached via cheaper ones and pops in penalty order.
     let mut budget = limit.saturating_mul(8);
-    while let Some((_, mut choice)) = heap.pop() {
+    while let Some((Reverse(penalty), mut choice)) = heap.pop() {
         if out.len() >= limit || budget == 0 {
             break;
         }
@@ -55,7 +57,7 @@ pub(crate) fn variants(input: &str, limit: usize) -> Vec<Variant> {
                 Some(stem) if pending => stem.to_string(),
                 _ => closed.clone(),
             };
-            out.push(Variant { closed, open });
+            out.push(Variant { closed, open, penalty });
         }
         for i in 0..choice.len() {
             if choice[i] + 1 < window[i].option_count() {

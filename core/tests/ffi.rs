@@ -29,7 +29,7 @@ fn full_flow_through_c_abi() {
         assert!(sinhala_is_composing(s));
         assert_eq!(take(sinhala_buffer(s)).as_deref(), Some("niladhaari"));
         assert_eq!(sinhala_row_count(s), 6);
-        assert_eq!(take(sinhala_row(s, 0)).as_deref(), Some("නිලධාරී"));
+        assert_eq!(take(sinhala_row(s, 0)).as_deref(), Some("නිලධාරි")); // same first row as the reference UI
         assert_eq!(take(sinhala_row(s, 5)).as_deref(), Some("niladhaari"));
         assert_eq!(sinhala_selected_row(s), 0);
         assert!(sinhala_page_count(s) > 1);
@@ -38,7 +38,7 @@ fn full_flow_through_c_abi() {
 
         sinhala_move_selection(s, 1);
         assert_eq!(sinhala_selected_row(s), 1);
-        assert_eq!(take(sinhala_commit(s)).as_deref(), Some("නිලධාරි"));
+        assert_eq!(take(sinhala_commit(s)).as_deref(), Some("නිලධාරී"));
         assert!(!sinhala_is_composing(s));
         assert!(sinhala_commit(s).is_null());
 

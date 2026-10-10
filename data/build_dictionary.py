@@ -34,9 +34,9 @@ def clean(text: str) -> str:
 
 
 def valid(word: str) -> bool:
-    # Drop stray marks/ZWJ runs and 1-letter fragments; keep real words.
+    # Drop stray mark-only and ZWJ runs; single letters are kept so that typing "ka" can offer ක.
     word = word.strip("‍")
-    return bool(SINHALA_LETTER.search(word)) and len(word) >= 2 and word[0] != "‍"
+    return bool(SINHALA_LETTER.search(word)) and word[0] != "‍"
 
 
 def main() -> None:

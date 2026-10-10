@@ -1,17 +1,25 @@
 use sinhala_core::{suggest, Dictionary};
 use std::time::Instant;
 
-const SMALL: &str = "නිලධාරි\t10\nනිලධාරී\t50\nනිළධාරි\t1\nමම\t100\nමමත්\t5\nමමත\t2\n";
+const SMALL: &str = "නිලධාරි\t10\nනිලධාරී\t5000\nනිළධාරි\t1\nමම\t100\nමමත්\t5\nමමත\t2\n";
 
 fn small() -> Dictionary<'static> {
     Dictionary::from_tsv(SMALL)
 }
 
 #[test]
-fn exact_hits_rank_by_frequency_not_rule_order() {
+fn much_more_frequent_word_beats_rule_order() {
     let got = suggest("niladhaari", &small(), 5);
-    // නිලධාරී (freq 50) beats නිලධාරි (freq 10) even though the rules prefer නිලධාරි.
+    // නිලධාරී (freq 5000) beats නිලධාරි (freq 10) even though the rules prefer නිලධාරි.
     assert_eq!(&got[..3], ["නිලධාරී", "නිලධාරි", "නිළධාරි"]);
+}
+
+#[test]
+fn similar_frequencies_keep_rule_order() {
+    // Real counts from the word list: නිලධාරි 310, නිලධාරී 404. The rules' own best guess
+    // wins when frequencies are close, which also matches the reference UI's first row.
+    let d = Dictionary::from_tsv("නිලධාරි\t310\nනිලධාරී\t404\n");
+    assert_eq!(&suggest("niladhaari", &d, 3)[..2], ["නිලධාරි", "නිලධාරී"]);
 }
 
 #[test]
@@ -63,6 +71,16 @@ fn embedded_dictionary_is_sane() {
     assert!(d.freq("සහ").unwrap() > 1000);
     assert_eq!(suggest("saha", d, 3)[0], "සහ");
     assert_eq!(suggest("athara", d, 3)[0], "අතර");
+}
+
+#[test]
+fn embedded_short_inputs_prefer_the_plain_letter() {
+    let d = Dictionary::embedded();
+    for (typed, want) in [("ka", "ක"), ("i", "ඉ"), ("a", "අ"), ("u", "උ"), ("da", "ද"), ("ma", "ම")] {
+        assert_eq!(suggest(typed, d, 3)[0], want, "typed {typed:?}");
+    }
+    // The reference UI's first candidate for niladhaari.
+    assert_eq!(suggest("niladhaari", d, 3)[0], "නිලධාරි");
 }
 
 #[test]
