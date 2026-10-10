@@ -50,6 +50,10 @@ To remove: macOS `macos/uninstall.sh`; Windows uninstall "Sinhala Input" in Sett
 Pushing a tag such as `v0.1.0` builds both installers in CI and attaches them to a GitHub release.
 See `PLAN.md` for the design and phases.
 
+## Licence
+
+The code is MIT-licensed (see `LICENSE`).
+
 ## Credits and licence of the word list
 
 `core/data/si-words.tsv` is derived from the Sinhala Wikipedia (text by Wikipedia contributors,
