@@ -18,3 +18,38 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: macos/build.sh test
       - run: macos/build.sh
+  windows-ime:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc,i686-pc-windows-msvc
+      - run: cargo test -p sinhala-tsf
+      - run: cargo build --release -p sinhala-tsf --target x86_64-pc-windows-msvc
+      - run: cargo build --release -p sinhala-tsf --target i686-pc-windows-msvc
+      - name: Register, activate and unregister (64-bit and 32-bit)
+        shell: pwsh
+        run: |
+          $clsid = '{060036E6-8D14-4BB1-AD0B-4513F41D3579}'
+          $key = "HKLM:\SOFTWARE\Classes\CLSID\$clsid"
+          $dll64 = (Resolve-Path target\x86_64-pc-windows-msvc\release\sinhala_tsf.dll).Path
+          $dll32 = (Resolve-Path target\i686-pc-windows-msvc\release\sinhala_tsf.dll).Path
+
+          # 64-bit: register, check registry, create the COM object, unregister.
+          $p = Start-Process "$env:WINDIR\System32\regsvr32.exe" -ArgumentList "/s `"$dll64`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "64-bit regsvr32 failed: $($p.ExitCode)" }
+          if (-not (Test-Path "$key\InprocServer32")) { throw "64-bit CLSID not registered" }
+          $obj = [Activator]::CreateInstance([Type]::GetTypeFromCLSID([Guid]$clsid))
+          if ($null -eq $obj) { throw "64-bit CreateInstance returned null" }
+          [void][Runtime.InteropServices.Marshal]::ReleaseComObject($obj)
+          $p = Start-Process "$env:WINDIR\System32\regsvr32.exe" -ArgumentList "/u /s `"$dll64`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "64-bit unregister failed: $($p.ExitCode)" }
+          if (Test-Path $key) { throw "64-bit CLSID still present after unregister" }
+
+          # 32-bit: same, through the 32-bit regsvr32 (writes the WOW6432 registry view).
+          $p = Start-Process "$env:WINDIR\SysWOW64\regsvr32.exe" -ArgumentList "/s `"$dll32`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "32-bit regsvr32 failed: $($p.ExitCode)" }
+          $p = Start-Process "$env:WINDIR\SysWOW64\regsvr32.exe" -ArgumentList "/u /s `"$dll32`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "32-bit unregister failed: $($p.ExitCode)" }
+          Write-Host "register/activate/unregister OK"

@@ -1,0 +1,4 @@
+# The TSF DLL is injected into arbitrary apps: link the C runtime statically so it
+# never depends on a vcruntime being present.
+[target.'cfg(target_env = "msvc")']
+rustflags = ["-C", "target-feature=+crt-static"]
