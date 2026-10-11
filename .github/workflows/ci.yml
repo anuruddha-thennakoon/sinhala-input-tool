@@ -91,9 +91,10 @@ jobs:
           }
           if (-not (Test-Path "$key64\InprocServer32")) { throw "64-bit registry view not registered" }
           if (-not (Test-Path "$key32\InprocServer32")) { throw "32-bit registry view not registered" }
-          $obj = [Activator]::CreateInstance([Type]::GetTypeFromCLSID([Guid]$clsid))
-          if ($null -eq $obj) { throw "CreateInstance returned null" }
-          [void][Runtime.InteropServices.Marshal]::ReleaseComObject($obj)
+          # Activate in a child process: the DLL stays loaded until that process exits, and it
+          # must not be locked in this one when we reinstall/uninstall below.
+          pwsh -NoProfile -Command "`$o = [Activator]::CreateInstance([Type]::GetTypeFromCLSID([Guid]'$clsid')); if (`$null -eq `$o) { exit 1 }"
+          if ($LASTEXITCODE -ne 0) { throw "CreateInstance failed: $LASTEXITCODE" }
           # Reinstall over the top (the upgrade path), then remove.
           powershell -NoProfile -ExecutionPolicy Bypass -File "$dir\install.ps1"
           if ($LASTEXITCODE -ne 0) { throw "reinstall failed: $LASTEXITCODE" }
@@ -136,9 +137,9 @@ jobs:
           if (-not (Test-Path "$env:ProgramFiles\SinhalaInput\sinhala_tsf_x86.dll")) { Fail "x86 DLL missing" }
           if (-not (Test-Path "$key64\InprocServer32")) { Fail "64-bit registry view not registered" }
           if (-not (Test-Path "$key32\InprocServer32")) { Fail "32-bit registry view not registered" }
-          $obj = [Activator]::CreateInstance([Type]::GetTypeFromCLSID([Guid]$clsid))
-          if ($null -eq $obj) { Fail "CreateInstance returned null" }
-          [void][Runtime.InteropServices.Marshal]::ReleaseComObject($obj)
+          # Child process, so the DLL is unloaded again before the uninstall below.
+          pwsh -NoProfile -Command "`$o = [Activator]::CreateInstance([Type]::GetTypeFromCLSID([Guid]'$clsid')); if (`$null -eq `$o) { exit 1 }"
+          if ($LASTEXITCODE -ne 0) { Fail "CreateInstance failed: $LASTEXITCODE" }
 
           $p = Start-Process msiexec -ArgumentList "/x `"$msi`" /qn /l*v msi-uninstall.log" -Wait -PassThru
           if ($p.ExitCode -ne 0) { Get-Content msi-uninstall.log -Tail 60; throw "uninstall failed: $($p.ExitCode)" }
