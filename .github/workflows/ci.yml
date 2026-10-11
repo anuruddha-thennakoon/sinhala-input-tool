@@ -146,6 +146,48 @@ jobs:
           if ((Test-Path $key64) -or (Test-Path $key32)) { throw "CLSID still registered after uninstall" }
           if (Test-Path "$env:ProgramFiles\SinhalaInput") { throw "install folder still present after uninstall" }
           Write-Host "MSI install/activate/uninstall OK"
+      - name: Build setup.exe
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          $version = (Select-String -Path core/Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Qp "/DVersion=$version" "/DOutDir=$PWD" `
+            "/DX64Dll=$PWD\target\x86_64-pc-windows-msvc\release\sinhala_tsf.dll" `
+            "/DX86Dll=$PWD\target\i686-pc-windows-msvc\release\sinhala_tsf.dll" `
+            "/DIcon=$PWD\windows\installer\sinhala.ico" windows\installer\SinhalaInput.iss
+          if ($LASTEXITCODE -ne 0) { throw "iscc failed: $LASTEXITCODE" }
+          Get-ChildItem SinhalaInput-*-Setup.exe
+      - name: Setup.exe install / activate / uninstall
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $exe = (Get-ChildItem SinhalaInput-*-Setup.exe).FullName
+          $clsid = '{060036E6-8D14-4BB1-AD0B-4513F41D3579}'
+          $key64 = "HKLM:\SOFTWARE\Classes\CLSID\$clsid"
+          $key32 = "HKLM:\SOFTWARE\WOW6432Node\Classes\CLSID\$clsid"
+          function Fail($m) { Get-Content setup-install.log -Tail 60 -ErrorAction SilentlyContinue; throw $m }
+
+          $p = Start-Process $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LOG=setup-install.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Fail "setup failed: $($p.ExitCode)" }
+          foreach ($f in 'sinhala_tsf_x64.dll','sinhala_tsf_x86.dll','sinhala.ico') {
+            if (-not (Test-Path "$env:ProgramFiles\SinhalaInput\$f")) { Fail "$f missing after install" }
+          }
+          if (-not (Test-Path "$key64\InprocServer32")) { Fail "64-bit registry view not registered" }
+          if (-not (Test-Path "$key32\InprocServer32")) { Fail "32-bit registry view not registered" }
+          pwsh -NoProfile -Command "`$o = [Activator]::CreateInstance([Type]::GetTypeFromCLSID([Guid]'$clsid')); if (`$null -eq `$o) { exit 1 }"
+          if ($LASTEXITCODE -ne 0) { Fail "CreateInstance failed: $LASTEXITCODE" }
+
+          $p = Start-Process "$env:ProgramFiles\SinhalaInput\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "uninstall failed: $($p.ExitCode)" }
+          if ((Test-Path $key64) -or (Test-Path $key32)) { throw "CLSID still registered after uninstall" }
+          if (Test-Path "$env:ProgramFiles\SinhalaInput\sinhala_tsf_x64.dll") { throw "DLL still present after uninstall" }
+          Write-Host "setup.exe install/activate/uninstall OK"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && hashFiles('SinhalaInput-*-Setup.exe') != '' }}
+        with:
+          name: windows-setup
+          path: SinhalaInput-*-Setup.exe
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() && hashFiles('SinhalaInput-*-x64.msi') != '' }}
         with:
