@@ -22,13 +22,21 @@ if (Test-Path (Join-Path $PSScriptRoot 'sinhala_tsf_x64.dll')) {      # portable
 if (-not (Test-Path $dll64)) { throw "64-bit DLL not found: $dll64 (build it first)" }
 
 $dest = Join-Path $env:ProgramFiles 'SinhalaInput'
+
+# regsvr32 is a GUI-subsystem exe: calling it with `&` neither waits for it nor sets $LASTEXITCODE,
+# so run it through Start-Process and read the real exit code.
+function Invoke-Regsvr([string]$exe, [string]$dll, [switch]$Unregister) {
+    $argList = @('/s', "`"$dll`"")
+    if ($Unregister) { $argList = @('/u') + $argList }
+    (Start-Process $exe -ArgumentList $argList -Wait -PassThru).ExitCode
+}
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 
 # Unregister any previous version first, so its DLLs are not held by the registry entries.
 foreach ($pair in @(@("$env:WINDIR\System32\regsvr32.exe", 'sinhala_tsf_x64.dll'),
                     @("$env:WINDIR\SysWOW64\regsvr32.exe", 'sinhala_tsf_x86.dll'))) {
     $old = Join-Path $dest $pair[1]
-    if (Test-Path $old) { & $pair[0] /u /s $old }
+    if (Test-Path $old) { [void](Invoke-Regsvr $pair[0] $old -Unregister) }
 }
 
 try {
@@ -39,12 +47,12 @@ try {
     throw "Could not copy files (an app may still be using the old version). Close Word and other apps, or sign out and back in, then run this again. $($_.Exception.Message)"
 }
 
-& "$env:WINDIR\System32\regsvr32.exe" /s (Join-Path $dest 'sinhala_tsf_x64.dll')
-if ($LASTEXITCODE -ne 0) { throw "64-bit registration failed (regsvr32 exit code $LASTEXITCODE)" }
+$rc = Invoke-Regsvr "$env:WINDIR\System32\regsvr32.exe" (Join-Path $dest 'sinhala_tsf_x64.dll')
+if ($rc -ne 0) { throw "64-bit registration failed (regsvr32 exit code $rc)" }
 
 if (Test-Path $dll32) {
-    & "$env:WINDIR\SysWOW64\regsvr32.exe" /s (Join-Path $dest 'sinhala_tsf_x86.dll')
-    if ($LASTEXITCODE -ne 0) { throw "32-bit registration failed (regsvr32 exit code $LASTEXITCODE)" }
+    $rc = Invoke-Regsvr "$env:WINDIR\SysWOW64\regsvr32.exe" (Join-Path $dest 'sinhala_tsf_x86.dll')
+    if ($rc -ne 0) { throw "32-bit registration failed (regsvr32 exit code $rc)" }
 } else {
     Write-Warning "No 32-bit DLL found; 32-bit apps will not see the input method."
 }
